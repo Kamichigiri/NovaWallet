@@ -1,0 +1,41 @@
+#############################
+# Solution-wide build output
+#############################
+**/bin/
+**/obj/
+**/packages/
+**/config/dotnet-tools.json
+**/nlog.config
+*.vs/
+
+
+#############################
+# IDE and OS Specific
+#############################
+*.user
+*.suo
+*.sln.docstates
+*.log
+*.tmp
+*.bak
+*.swp
+.DS_Store
+Thumbs.db
+ehthumbs.db
+
+#############################
+# Environment and tools
+#############################
+.env
+.vscode/
+.idea/
+*.pdf
+
+
+bin/
+obj/
+.vs/
+*.user
+*.suo
+.env
+TestResults/
