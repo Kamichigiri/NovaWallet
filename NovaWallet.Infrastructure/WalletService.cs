@@ -16,44 +16,56 @@ public sealed class WalletService(NovaWalletDbContext db, ISystemClock clock) : 
 
     public async Task<WalletResponse> CreateWalletAsync(CreateWalletRequest request, CancellationToken ct)
     {
+        // Validate the request
         if (string.IsNullOrWhiteSpace(request.CustomerId))
         {
             Activity.Current?.AddTag("WalletService.CreateWalletAsync :::", "CustomerId is null or empty");
             throw new ValidationAppException("CustomerId is required.");
         }
 
+        //  Check if a wallet already exists for the given CustomerId
         var exists = await db.Wallets.AnyAsync(x => x.CustomerId == request.CustomerId.Trim(), ct);
+        //  Log the result of the existence check
         if (exists)
         {
             Activity.Current?.AddTag("WalletService.CreateWalletAsync :::", $"Wallet already exists for CustomerId: {request.CustomerId}");
             throw new ConflictAppException("A wallet already exists for the customer.");
         }
+
+        //  Create a new wallet and save it to the database
         var wallet = new Wallet(Guid.NewGuid(), request.CustomerId.Trim(), clock.UtcNow);
         db.Wallets.Add(wallet);
         await db.SaveChangesAsync(ct);
         Activity.Current?.AddTag("WalletService.CreateWalletAsync :::", $"Wallet created with Id: {wallet.Id} for CustomerId: {request.CustomerId}");
+
+        //  Return the wallet response
         return Map(wallet);
     }
 
     public async Task<WalletResponse> GetBalanceAsync(Guid walletId, CancellationToken ct)
     {
+        //  Fetch the wallet from the database without tracking
         var wallet = await db.Wallets.AsNoTracking().SingleOrDefaultAsync(x => x.Id == walletId, ct);
             if(wallet == null)
         {
             Activity.Current?.AddTag("WalletService.GetBalanceAsync :::", $"Wallet not found for Id: {walletId}");
             throw new NotFoundAppException("Wallet not found.");
         }
+        //  Log the wallet balance retrieval
+        Activity.Current?.AddTag("WalletService.GetBalanceAsync :::", $"Retrieved balance for WalletId: {walletId}");
         return Map(wallet);
     }
 
     public async Task<WalletResponse> CreditAsync(Guid walletId, CreditWalletRequest request, CancellationToken ct)
     {
+        // Validate the request
         if (request.AmountKobo <= 0)
         {
             Activity.Current?.AddTag("WalletService.CreditAsync :::", $"Invalid AmountKobo: {request.AmountKobo} for WalletId: {walletId}");
             throw new ValidationAppException("AmountKobo must be greater than zero.");
         }
 
+        //  Begin a database transaction with ReadCommitted isolation level
         await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, ct);
         var wallet = await db.LockWalletAsync(walletId, ct);
         if (wallet == null)
@@ -62,11 +74,13 @@ public sealed class WalletService(NovaWalletDbContext db, ISystemClock clock) : 
             throw new NotFoundAppException("Wallet not found.");
         }
 
+        //  Credit the wallet with the specified amount
         wallet.Credit(request.AmountKobo);
         var mutationId = Guid.NewGuid();
 
         Activity.Current?.AddTag("WalletService.CreditAsync :::", $"Crediting WalletId: {walletId} with AmountKobo: {request.AmountKobo}, MutationId: {mutationId}");
 
+        //  Create a ledger entry for the credit operation
         db.LedgerEntries.Add(new LedgerEntry
         {
             Id = Guid.NewGuid(), WalletId = wallet.Id, TransferId = mutationId,
@@ -74,6 +88,7 @@ public sealed class WalletService(NovaWalletDbContext db, ISystemClock clock) : 
             BalanceAfterKobo = wallet.BalanceKobo, Currency = wallet.Currency,
             CreatedAtUtc = clock.UtcNow
         });
+
         db.AuditLogs.Add(new AuditLog
         {
             EventType = "WalletCredited", EntityType = "Wallet", EntityId = wallet.Id,
@@ -113,16 +128,20 @@ public sealed class WalletService(NovaWalletDbContext db, ISystemClock clock) : 
                             WHERE [Key] = {idempotencyKey}
                         );
                         """, ct);
-
+        // Log the result of the idempotency record insertion
         if (inserted == 0)
         {
             Activity.Current?.AddTag("WalletService.TransferAsync :::", $"Idempotency-Key: {idempotencyKey} already exists. Fetching existing transfer details.");
             var existing = await db.IdempotencyRecords.AsNoTracking().SingleAsync(x => x.Key == idempotencyKey, ct);
+
+            // Validate the existing request hash for comparison
             if (!string.Equals(existing.RequestHash, hash, StringComparison.Ordinal))
             {
                 Activity.Current?.AddTag("WalletService.TransferAsync :::", $"Idempotency-Key: {idempotencyKey} was used with a different payload. Existing RequestHash: {existing.RequestHash}, Current RequestHash: {hash}");
                 throw new ConflictAppException("Idempotency-Key was already used with a different payload.");
             }
+
+            // Fetch the existing transfer details associated with the idempotency key
             var existingTransfer = await db.Transfers.AsNoTracking().SingleAsync(x => x.Id == existing.TransferId, ct);
             Activity.Current?.AddTag("WalletService.TransferAsync :::", $"Returning existing transfer details for TransferId: {existingTransfer.Id} associated with Idempotency-Key: {idempotencyKey}");
             await tx.CommitAsync(ct);
@@ -135,6 +154,7 @@ public sealed class WalletService(NovaWalletDbContext db, ISystemClock clock) : 
         var source = first.Id == request.SourceWalletId ? first : second;
         var destination = first.Id == request.DestinationWalletId ? first : second;
 
+        //  Validate that the source and destination wallets have the same currency before proceeding with the transfer
         if (source.Currency != destination.Currency)
         {
             Activity.Current?.AddTag("WalletService.TransferAsync :::", $"Currency mismatch between SourceWalletId: {source.Id} (Currency: {source.Currency}) and DestinationWalletId: {destination.Id} (Currency: {destination.Currency})");
@@ -143,6 +163,7 @@ public sealed class WalletService(NovaWalletDbContext db, ISystemClock clock) : 
 
         try
         {
+            // Debit the source wallet with the specified amount, daily limit, and current date
             source.Debit(request.AmountKobo, DailyLimitKobo, clock.WatToday);
         }
         catch (InvalidOperationException ex) when (ex.Message.StartsWith("Insufficient", StringComparison.OrdinalIgnoreCase))
@@ -156,9 +177,11 @@ public sealed class WalletService(NovaWalletDbContext db, ISystemClock clock) : 
             throw new ConflictAppException(ex.Message);
         }
 
+        // Credit the destination wallet with the specified amount
         destination.Credit(request.AmountKobo);
 
         Activity.Current?.AddTag("WalletService.TransferAsync :::", $"Transfer operation successful. SourceWalletId: {source.Id} debited by AmountKobo: {request.AmountKobo}, New BalanceKobo: {source.BalanceKobo}. DestinationWalletId: {destination.Id} credited by AmountKobo: {request.AmountKobo}, New BalanceKobo: {destination.BalanceKobo}");
+        //  Create a new transfer record and associated ledger entries for the debit and credit operations
         var transfer = new Transfer
         {
             Id = newTransferId, SourceWalletId = source.Id, DestinationWalletId = destination.Id,
@@ -172,6 +195,8 @@ public sealed class WalletService(NovaWalletDbContext db, ISystemClock clock) : 
         );
 
         Activity.Current?.AddTag("WalletService.TransferAsync :::", $"Ledger entries created for TransferId: {transfer.Id}. SourceWalletId: {source.Id} debited and DestinationWalletId: {destination.Id} credited.");
+
+        //  Create an audit log entry for the completed transfer operation
         db.AuditLogs.Add(new AuditLog
         {
             EventType = "TransferCompleted", EntityType = "Transfer", EntityId = transfer.Id,
