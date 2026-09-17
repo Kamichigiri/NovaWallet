@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
+using NovaWallet.Api.ServiceExtentions;
 using NovaWallet.Application.Contracts;
 using NovaWallet.Application.Exceptions;
 
@@ -7,6 +9,7 @@ namespace NovaWallet.Api.Controllers;
 
 [ApiController]
 [Route("api/transfers")]
+[EnableRateLimiting(RateLimiterConfig.PolicyName)]
 [Authorize]
 public sealed class TransfersController(IWalletService service) : ControllerBase
 {

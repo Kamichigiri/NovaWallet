@@ -3,6 +3,7 @@ using System.Security.Claims;
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using NovaWallet.Api;
@@ -34,6 +35,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
     };
 });
 builder.Services.AddAuthorization();
+builder.Services.AddIpRateLimiter(builder.Configuration);
 
 var app = builder.Build();
 using (var scope = app.Services.CreateScope())
@@ -61,6 +63,17 @@ app.UseHealthChecks("/health", new HealthCheckOptions
         }
     }
 });
+
+var options = new ForwardedHeadersOptions
+{
+    ForwardedHeaders =
+    ForwardedHeaders.XForwardedFor |
+    ForwardedHeaders.XForwardedProto
+};
+
+app.UseForwardedHeaders(options);
+
+app.UseRateLimiter();
 
 app.UseMiddleware<ProblemDetailsMiddleware>();
 app.UseAuthentication();
