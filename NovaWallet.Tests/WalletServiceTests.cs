@@ -11,19 +11,9 @@ public class WalletServiceTests
 {
     private static DbContextOptions<NovaWalletDbContext> CreateOptions(string dbName)
     {
-        var connectionString = Environment.GetEnvironmentVariable("NOVAWALLET_TEST_DB")
-            ?? "Server=localhost;Database=novawallet_test;Integrated Security=True;Encrypt=False;";
-
-        var options = new DbContextOptionsBuilder<NovaWalletDbContext>()
-            .UseSqlServer(connectionString)
+        return new DbContextOptionsBuilder<NovaWalletDbContext>()
+            .UseInMemoryDatabase(dbName)
             .Options;
-
-        using (var setup = new NovaWalletDbContext(options))
-        {
-            setup.Database.EnsureCreatedAsync();
-        }
-
-        return options;
     }
     private sealed class TestClock(DateTimeOffset now) : ISystemClock
     {
