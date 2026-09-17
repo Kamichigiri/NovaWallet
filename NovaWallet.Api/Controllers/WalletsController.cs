@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
+using NovaWallet.Api.ServiceExtentions;
 using NovaWallet.Application.Contracts;
 
 namespace NovaWallet.Api.Controllers;
@@ -17,8 +19,9 @@ public sealed class WalletsController(IWalletService service) : ControllerBase
     public Task<WalletResponse> Balance(Guid walletId, CancellationToken ct) => service.GetBalanceAsync(walletId, ct);
 
     [HttpPost("{walletId:guid}/credit")]
+    [EnableRateLimiting(RateLimiterConfig.PolicyName)]
     public async Task<WalletResponse> Credit(Guid walletId, CreditWalletRequest request, CancellationToken ct)
-        => await service.CreditAsync(walletId, request, ct);
+    => await service.CreditAsync(walletId, request, ct);
 
     [HttpGet("{walletId:guid}/statement")]
     public Task<PagedResult<StatementEntryResponse>> Statement(Guid walletId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20, CancellationToken ct = default)

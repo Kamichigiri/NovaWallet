@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using NovaWallet.Application.Exceptions;
 
@@ -22,7 +23,7 @@ public sealed class ProblemDetailsMiddleware(RequestDelegate next)
         ctx.Response.ContentType = "application/problem+json";
         await ctx.Response.WriteAsync(JsonSerializer.Serialize(new
         {
-            type = $"https://httpstatuses.com/{status}", title = code, status, detail, traceId = ctx.TraceIdentifier
+            type = $"https://httpstatuses.com/{status}", title = code, status, detail, traceId = Activity.Current?.TraceId.ToString() ?? ctx.TraceIdentifier
         }));
     }
 }
